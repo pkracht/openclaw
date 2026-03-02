@@ -373,11 +373,6 @@ export async function runPreparedReply(
     groupIntro,
     groupSystemPrompt,
   ].filter(Boolean);
-  const extraSystemPrompt = await mergeExternalSystemPrompt(
-    [inboundMetaPrompt, groupChatContext, groupIntro, groupSystemPrompt]
-      .filter(Boolean)
-      .join("\n\n"),
-  );
   const baseBody = sessionCtx.BodyStripped ?? sessionCtx.Body ?? "";
   // Use CommandBody/RawBody for bare reset detection (clean message without structural context).
   const rawBodyTrimmed = (ctx.CommandBody ?? ctx.RawBody ?? ctx.Body ?? "").trim();
@@ -446,6 +441,7 @@ export async function runPreparedReply(
   if (queuedSystemPrompt) {
     extraSystemPromptParts.push(queuedSystemPrompt);
   }
+  const extraSystemPrompt = await mergeExternalSystemPrompt(extraSystemPromptParts.join("\n\n"));
   prefixedBodyBase = appendUntrustedContext(prefixedBodyBase, sessionCtx.UntrustedContext);
   const threadStarterBody = ctx.ThreadStarterBody?.trim();
   const threadHistoryBody = ctx.ThreadHistoryBody?.trim();

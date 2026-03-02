@@ -631,23 +631,27 @@ export function createGatewayHttpServer(opts: {
             }),
         });
       }
-      if (isGatewayMediaPath(requestPath)) {
-        const ok = await authorizeCanvasRequest({
-          req,
-          auth: resolvedAuth,
-          trustedProxies,
-          allowRealIpFallback,
-          clients,
-          rateLimiter,
-        });
-        if (!ok.ok) {
-          sendGatewayAuthFailure(res, ok);
-          return;
-        }
-        if (await handleGatewayMediaRequest({ req, res, requestPath })) {
-          return;
-        }
-      }
+      requestStages.push({
+        name: "gateway-media",
+        run: async () => {
+          if (!isGatewayMediaPath(requestPath)) {
+            return false;
+          }
+          const ok = await authorizeCanvasRequest({
+            req,
+            auth: resolvedAuth,
+            trustedProxies,
+            allowRealIpFallback,
+            clients,
+            rateLimiter,
+          });
+          if (!ok.ok) {
+            sendGatewayAuthFailure(res, ok);
+            return true;
+          }
+          return await handleGatewayMediaRequest({ req, res, requestPath });
+        },
+      });
       if (canvasHost) {
         requestStages.push({
           name: "canvas-auth",
