@@ -14,6 +14,7 @@ import { agentCommand } from "../commands/agent.js";
 import type { ImageContent } from "../commands/agent/types.js";
 import type { GatewayHttpResponsesConfig } from "../config/types.gateway.js";
 import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
+import { normalizeReplyPayloadsForDelivery } from "../infra/outbound/payloads.js";
 import { logWarn } from "../logger.js";
 import {
   DEFAULT_INPUT_IMAGE_MAX_BYTES,
@@ -56,6 +57,31 @@ type OpenResponsesHttpOptions = {
 
 const DEFAULT_BODY_BYTES = 20 * 1024 * 1024;
 const DEFAULT_MAX_URL_PARTS = 8;
+
+function renderPayloadText(
+  payloads: Array<{ text?: string; mediaUrl?: string | null; mediaUrls?: string[] }> | undefined,
+): string {
+  if (!Array.isArray(payloads) || payloads.length === 0) {
+    return "No response from OpenClaw.";
+  }
+  const content = normalizeReplyPayloadsForDelivery(payloads as never)
+    .map((payload) => {
+      const lines: string[] = [];
+      if (typeof payload.text === "string" && payload.text.trim()) {
+        lines.push(payload.text.trim());
+      }
+      const mediaUrls = payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []);
+      for (const mediaUrl of mediaUrls) {
+        if (typeof mediaUrl === "string" && mediaUrl.trim()) {
+          lines.push(mediaUrl.trim());
+        }
+      }
+      return lines.join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+  return content || "No response from OpenClaw.";
+}
 
 function writeSseEvent(res: ServerResponse, event: StreamingEvent) {
   res.write(`event: ${event.type}\n`);
@@ -496,13 +522,7 @@ export async function handleOpenResponsesHttpRequest(
         return true;
       }
 
-      const content =
-        Array.isArray(payloads) && payloads.length > 0
-          ? payloads
-              .map((p) => (typeof p.text === "string" ? p.text : ""))
-              .filter(Boolean)
-              .join("\n\n")
-          : "No response from OpenClaw.";
+      const content = renderPayloadText(payloads);
 
       const response = createResponseResource({
         id: responseId,
@@ -784,13 +804,7 @@ export async function handleOpenResponsesHttpRequest(
           return;
         }
 
-        const content =
-          Array.isArray(payloads) && payloads.length > 0
-            ? payloads
-                .map((p) => (typeof p.text === "string" ? p.text : ""))
-                .filter(Boolean)
-                .join("\n\n")
-            : "No response from OpenClaw.";
+        const content = renderPayloadText(payloads);
 
         accumulatedText = content;
         sawAssistantDelta = true;

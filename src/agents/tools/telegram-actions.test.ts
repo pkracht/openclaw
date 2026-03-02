@@ -312,6 +312,28 @@ describe("handleTelegramAction", () => {
       expectedOptions: { mediaUrl: "https://example.com/image.jpg" },
     },
     {
+      name: "path",
+      params: {
+        action: "sendMessage",
+        to: "123456",
+        path: "~/.openclaw/media/browser/test.jpg",
+      },
+      expectedTo: "123456",
+      expectedContent: "",
+      expectedOptions: { mediaUrl: "~/.openclaw/media/browser/test.jpg" },
+    },
+    {
+      name: "filePath",
+      params: {
+        action: "sendMessage",
+        to: "123456",
+        filePath: "./media/inbound/test.jpg",
+      },
+      expectedTo: "123456",
+      expectedContent: "",
+      expectedOptions: { mediaUrl: "./media/inbound/test.jpg" },
+    },
+    {
       name: "quoteText",
       params: {
         action: "sendMessage",
@@ -350,7 +372,7 @@ describe("handleTelegramAction", () => {
     );
   });
 
-  it("requires content when no mediaUrl is provided", async () => {
+  it("requires content when no media reference is provided", async () => {
     await expect(
       handleTelegramAction(
         {

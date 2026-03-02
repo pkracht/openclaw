@@ -9,7 +9,8 @@ import {
 import { withBrowserNavigationPolicy } from "../navigation-guard.js";
 import {
   DEFAULT_BROWSER_SCREENSHOT_MAX_BYTES,
-  DEFAULT_BROWSER_SCREENSHOT_MAX_SIDE,
+  DEFAULT_BROWSER_SCREENSHOT_MAX_HEIGHT,
+  DEFAULT_BROWSER_SCREENSHOT_MAX_WIDTH,
   normalizeBrowserScreenshot,
 } from "../screenshot.js";
 import type { BrowserRouteContext } from "../server-context.js";
@@ -191,7 +192,8 @@ export function registerBrowserAgentSnapshotRoutes(
         }
 
         const normalized = await normalizeBrowserScreenshot(buffer, {
-          maxSide: DEFAULT_BROWSER_SCREENSHOT_MAX_SIDE,
+          maxWidth: DEFAULT_BROWSER_SCREENSHOT_MAX_WIDTH,
+          maxHeight: DEFAULT_BROWSER_SCREENSHOT_MAX_HEIGHT,
           maxBytes: DEFAULT_BROWSER_SCREENSHOT_MAX_BYTES,
         });
         await saveBrowserMediaResponse({
@@ -303,7 +305,8 @@ export function registerBrowserAgentSnapshotRoutes(
             type: "png",
           });
           const normalized = await normalizeBrowserScreenshot(labeled.buffer, {
-            maxSide: DEFAULT_BROWSER_SCREENSHOT_MAX_SIDE,
+            maxWidth: DEFAULT_BROWSER_SCREENSHOT_MAX_WIDTH,
+            maxHeight: DEFAULT_BROWSER_SCREENSHOT_MAX_HEIGHT,
             maxBytes: DEFAULT_BROWSER_SCREENSHOT_MAX_BYTES,
           });
           await ensureMediaDir();

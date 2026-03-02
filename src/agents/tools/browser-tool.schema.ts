@@ -86,7 +86,7 @@ const BrowserActSchema = Type.Object({
 // A root-level `Type.Union([...])` compiles to `{ anyOf: [...] }` (no `type`),
 // which OpenAI rejects ("Invalid schema ... type: None"). Keep this schema an object.
 export const BrowserToolSchema = Type.Object({
-  action: stringEnum(BROWSER_TOOL_ACTIONS),
+  action: Type.Optional(stringEnum(BROWSER_TOOL_ACTIONS)),
   target: optionalStringEnum(BROWSER_TARGETS),
   node: Type.Optional(Type.String()),
   profile: Type.Optional(Type.String()),

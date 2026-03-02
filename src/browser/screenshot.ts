@@ -1,42 +1,60 @@
-import {
-  buildImageResizeSideGrid,
-  getImageMetadata,
-  IMAGE_REDUCE_QUALITY_STEPS,
-  resizeToJpeg,
-} from "../media/image-ops.js";
+import { getImageMetadata, IMAGE_REDUCE_QUALITY_STEPS, resizeToJpeg } from "../media/image-ops.js";
 
-export const DEFAULT_BROWSER_SCREENSHOT_MAX_SIDE = 2000;
+export const DEFAULT_BROWSER_SCREENSHOT_MAX_WIDTH = 1600;
+export const DEFAULT_BROWSER_SCREENSHOT_MAX_HEIGHT = 5000;
 export const DEFAULT_BROWSER_SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024;
 
 export async function normalizeBrowserScreenshot(
   buffer: Buffer,
   opts?: {
-    maxSide?: number;
+    maxWidth?: number;
+    maxHeight?: number;
     maxBytes?: number;
   },
 ): Promise<{ buffer: Buffer; contentType?: "image/jpeg" }> {
-  const maxSide = Math.max(1, Math.round(opts?.maxSide ?? DEFAULT_BROWSER_SCREENSHOT_MAX_SIDE));
+  const maxWidth = Math.max(1, Math.round(opts?.maxWidth ?? DEFAULT_BROWSER_SCREENSHOT_MAX_WIDTH));
+  const maxHeight = Math.max(
+    1,
+    Math.round(opts?.maxHeight ?? DEFAULT_BROWSER_SCREENSHOT_MAX_HEIGHT),
+  );
   const maxBytes = Math.max(1, Math.round(opts?.maxBytes ?? DEFAULT_BROWSER_SCREENSHOT_MAX_BYTES));
 
   const meta = await getImageMetadata(buffer);
   const width = Number(meta?.width ?? 0);
   const height = Number(meta?.height ?? 0);
-  const maxDim = Math.max(width, height);
 
-  if (buffer.byteLength <= maxBytes && (maxDim === 0 || (width <= maxSide && height <= maxSide))) {
+  if (
+    buffer.byteLength <= maxBytes &&
+    (width === 0 || (width <= maxWidth && height <= maxHeight))
+  ) {
     return { buffer };
   }
 
-  const sideStart = maxDim > 0 ? Math.min(maxSide, maxDim) : maxSide;
-  const sideGrid = buildImageResizeSideGrid(maxSide, sideStart);
+  const sizeGrid = [
+    { maxWidth, maxHeight },
+    { maxWidth: Math.min(maxWidth, 1280), maxHeight },
+    { maxWidth: Math.min(maxWidth, 1080), maxHeight },
+    { maxWidth: Math.min(maxWidth, 1080), maxHeight: Math.min(maxHeight, 4000) },
+    { maxWidth: Math.min(maxWidth, 900), maxHeight: Math.min(maxHeight, 3500) },
+    { maxWidth: Math.min(maxWidth, 800), maxHeight: Math.min(maxHeight, 3000) },
+    { maxWidth: Math.min(maxWidth, 720), maxHeight: Math.min(maxHeight, 2400) },
+  ].filter(
+    (candidate, index, all) =>
+      candidate.maxWidth > 0 &&
+      candidate.maxHeight > 0 &&
+      all.findIndex(
+        (other) => other.maxWidth === candidate.maxWidth && other.maxHeight === candidate.maxHeight,
+      ) === index,
+  );
 
   let smallest: { buffer: Buffer; size: number } | null = null;
 
-  for (const side of sideGrid) {
+  for (const size of sizeGrid) {
     for (const quality of IMAGE_REDUCE_QUALITY_STEPS) {
       const out = await resizeToJpeg({
         buffer,
-        maxSide: side,
+        maxWidth: width > 0 ? Math.min(size.maxWidth, width) : size.maxWidth,
+        maxHeight: height > 0 ? Math.min(size.maxHeight, height) : size.maxHeight,
         quality,
         withoutEnlargement: true,
       });

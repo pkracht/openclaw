@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { detectMime } from "../../media/mime.js";
+import { resolvePublicMediaUrl } from "../../media/public-url.js";
 import type { ImageSanitizationLimits } from "../image-sanitization.js";
 import { sanitizeToolResultImages } from "../tool-images.js";
 
@@ -263,10 +264,13 @@ export async function imageResult(params: {
   details?: Record<string, unknown>;
   imageSanitization?: ImageSanitizationLimits;
 }): Promise<AgentToolResult<unknown>> {
+  const publicUrl = resolvePublicMediaUrl(params.path);
   const content: AgentToolResult<unknown>["content"] = [
     {
       type: "text",
-      text: params.extraText ?? `MEDIA:${params.path}`,
+      text:
+        params.extraText ??
+        (publicUrl ? `MEDIA:${params.path}\n${publicUrl}` : `MEDIA:${params.path}`),
     },
     {
       type: "image",

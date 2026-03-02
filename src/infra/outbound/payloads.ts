@@ -4,6 +4,7 @@ import {
   shouldSuppressReasoningPayload,
 } from "../../auto-reply/reply/reply-payloads.js";
 import type { ReplyPayload } from "../../auto-reply/types.js";
+import { resolvePublicMediaUrl } from "../../media/public-url.js";
 
 export type NormalizedOutboundPayload = {
   text: string;
@@ -18,6 +19,38 @@ export type OutboundPayloadJson = {
   channelData?: Record<string, unknown>;
 };
 
+const LOCAL_MEDIA_TOKEN_RE = /\bMEDIA:\s*`?([^\n`]+)`?/gi;
+const TOOL_RESPONSE_BLOCK_RE = /<tool_response>\s*[\s\S]*?<\/tool_response>\s*/gi;
+
+function normalizeMediaUrlEntry(entry?: string | null): string | undefined {
+  const trimmed = entry?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return resolvePublicMediaUrl(trimmed) ?? trimmed;
+}
+
+function rewriteVisibleMediaTokens(text: string): string {
+  if (!text.includes("MEDIA:")) {
+    return text;
+  }
+  return text.replace(LOCAL_MEDIA_TOKEN_RE, (match, rawValue: string) => {
+    const candidate = rawValue
+      .trim()
+      .replace(/^[`"'[{(]+/, "")
+      .replace(/[`"'\\})\],]+$/, "");
+    const resolved = normalizeMediaUrlEntry(candidate);
+    return resolved ?? match;
+  });
+}
+
+function stripLiteralToolResponseBlocks(text: string): string {
+  if (!text.includes("<tool_response>")) {
+    return text;
+  }
+  return text.replace(TOOL_RESPONSE_BLOCK_RE, "").trim();
+}
+
 function mergeMediaUrls(...lists: Array<ReadonlyArray<string | undefined> | undefined>): string[] {
   const seen = new Set<string>();
   const merged: string[] = [];
@@ -30,11 +63,12 @@ function mergeMediaUrls(...lists: Array<ReadonlyArray<string | undefined> | unde
       if (!trimmed) {
         continue;
       }
-      if (seen.has(trimmed)) {
+      const normalizedEntry = resolvePublicMediaUrl(trimmed) ?? trimmed;
+      if (seen.has(normalizedEntry)) {
         continue;
       }
-      seen.add(trimmed);
-      merged.push(trimmed);
+      seen.add(normalizedEntry);
+      merged.push(normalizedEntry);
     }
   }
   return merged;
@@ -50,15 +84,16 @@ export function normalizeReplyPayloadsForDelivery(
     const parsed = parseReplyDirectives(payload.text ?? "");
     const explicitMediaUrls = payload.mediaUrls ?? parsed.mediaUrls;
     const explicitMediaUrl = payload.mediaUrl ?? parsed.mediaUrl;
+    const normalizedMediaUrl = normalizeMediaUrlEntry(explicitMediaUrl);
     const mergedMedia = mergeMediaUrls(
       explicitMediaUrls,
-      explicitMediaUrl ? [explicitMediaUrl] : undefined,
+      normalizedMediaUrl ? [normalizedMediaUrl] : undefined,
     );
     const hasMultipleMedia = (explicitMediaUrls?.length ?? 0) > 1;
-    const resolvedMediaUrl = hasMultipleMedia ? undefined : explicitMediaUrl;
+    const resolvedMediaUrl = hasMultipleMedia ? undefined : normalizedMediaUrl;
     const next: ReplyPayload = {
       ...payload,
-      text: parsed.text ?? "",
+      text: rewriteVisibleMediaTokens(stripLiteralToolResponseBlocks(parsed.text ?? "")),
       mediaUrls: mergedMedia.length ? mergedMedia : undefined,
       mediaUrl: resolvedMediaUrl,
       replyToId: payload.replyToId ?? parsed.replyToId,

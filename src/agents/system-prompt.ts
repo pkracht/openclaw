@@ -459,6 +459,8 @@ export function buildAgentSystemPrompt(params: {
     "Keep narration brief and value-dense; avoid repeating obvious steps.",
     "Use plain human language for narration unless in a technical context.",
     "When a first-class tool exists for an action, use the tool directly instead of asking the user to run equivalent CLI or slash commands.",
+    "Never output literal <tool_response> tags, fake tool JSON, fabricated screenshotId/screenshotUrl values, or third-party screenshot links. Tool results are produced by the runtime, not by you.",
+    "If the user asks for a screenshot, file, or media link, call the relevant tool. When a real tool result contains MEDIA:<path>, you may mention that media result or the derived public URL, but do not invent one.",
     "",
     ...safetySection,
     "## OpenClaw CLI Quick Reference",

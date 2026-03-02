@@ -175,7 +175,10 @@ export async function handleTelegramAction(
       throw new Error("Telegram sendMessage is disabled.");
     }
     const to = readStringParam(params, "to", { required: true });
-    const mediaUrl = readStringParam(params, "mediaUrl");
+    const mediaUrl =
+      readStringParam(params, "mediaUrl") ??
+      readStringParam(params, "path", { trim: false }) ??
+      readStringParam(params, "filePath", { trim: false });
     // Allow content to be omitted when sending media-only (e.g., voice notes)
     const content =
       readStringParam(params, "content", {

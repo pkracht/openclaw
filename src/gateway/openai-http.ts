@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommand } from "../commands/agent.js";
 import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
+import { normalizeReplyPayloadsForDelivery } from "../infra/outbound/payloads.js";
 import { logWarn } from "../logger.js";
 import { defaultRuntime } from "../runtime.js";
 import { resolveAssistantStreamDeltaText } from "./agent-event-assistant-text.js";
@@ -188,12 +189,28 @@ function coerceRequest(val: unknown): OpenAiChatCompletionRequest {
 }
 
 function resolveAgentResponseText(result: unknown): string {
-  const payloads = (result as { payloads?: Array<{ text?: string }> } | null)?.payloads;
+  const payloads = (
+    result as {
+      payloads?: Array<{ text?: string; mediaUrl?: string | null; mediaUrls?: string[] }>;
+    } | null
+  )?.payloads;
   if (!Array.isArray(payloads) || payloads.length === 0) {
     return "No response from OpenClaw.";
   }
-  const content = payloads
-    .map((p) => (typeof p.text === "string" ? p.text : ""))
+  const content = normalizeReplyPayloadsForDelivery(payloads as never)
+    .map((payload) => {
+      const lines: string[] = [];
+      if (typeof payload.text === "string" && payload.text.trim()) {
+        lines.push(payload.text.trim());
+      }
+      const mediaUrls = payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []);
+      for (const mediaUrl of mediaUrls) {
+        if (typeof mediaUrl === "string" && mediaUrl.trim()) {
+          lines.push(mediaUrl.trim());
+        }
+      }
+      return lines.join("\n");
+    })
     .filter(Boolean)
     .join("\n\n");
   return content || "No response from OpenClaw.";

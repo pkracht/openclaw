@@ -77,6 +77,10 @@ export type AgentCommandOpts = {
   runId?: string;
   extraSystemPrompt?: string;
   internalEvents?: AgentInternalEvent[];
+  /** If true, disable built-in tools for this run. */
+  disableTools?: boolean;
+  /** If true, omit the message tool from the tool list for this run. */
+  disableMessageTool?: boolean;
   inputProvenance?: InputProvenance;
   /** Per-call stream param overrides (best-effort). */
   streamParams?: AgentStreamParams;

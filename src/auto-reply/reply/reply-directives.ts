@@ -13,11 +13,43 @@ export type ReplyDirectiveParseResult = {
   isSilent: boolean;
 };
 
+const TOOL_RESPONSE_BLOCK_RE = /<tool_response>\s*[\s\S]*?<\/tool_response>\s*/gi;
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripFakePublicMediaUrls(text: string): string {
+  const baseUrl = process.env.OPENCLAW_MEDIA_PUBLIC_BASE_URL?.trim();
+  if (!baseUrl) {
+    return text;
+  }
+  const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  const fakeTargetUrlRe = new RegExp(
+    `${escapeRegex(normalizedBase)}(?:browser|camera|canvas|screen)/([A-Fa-f0-9]{16,64})(?=\\b|[\\s)\\]}>"'])`,
+    "g",
+  );
+  return text
+    .replace(fakeTargetUrlRe, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function sanitizeVisibleReplyText(raw: string): string {
+  if (!raw) {
+    return raw;
+  }
+  const withoutToolResponses = raw.includes("<tool_response>")
+    ? raw.replace(TOOL_RESPONSE_BLOCK_RE, " ")
+    : raw;
+  return stripFakePublicMediaUrls(withoutToolResponses);
+}
+
 export function parseReplyDirectives(
   raw: string,
   options: { currentMessageId?: string; silentToken?: string } = {},
 ): ReplyDirectiveParseResult {
-  const split = splitMediaFromOutput(raw);
+  const split = splitMediaFromOutput(sanitizeVisibleReplyText(raw));
   let text = split.text ?? "";
 
   const replyParsed = parseInlineDirectives(text, {

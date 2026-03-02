@@ -53,6 +53,32 @@ type CdpTarget = {
   type?: string;
 };
 
+async function resolveOpenedTargetId(opts: {
+  targetId: string;
+  openedUrl: string;
+  listTabs: () => Promise<BrowserTab[]>;
+}): Promise<BrowserTab | null> {
+  const deadline = Date.now() + OPEN_TAB_DISCOVERY_WINDOW_MS;
+  while (Date.now() < deadline) {
+    const tabs = await opts.listTabs().catch(() => [] as BrowserTab[]);
+    const exact = tabs.find((tab) => tab.targetId === opts.targetId);
+    if (exact) {
+      return exact;
+    }
+    const sameUrl = tabs.find(
+      (tab) => tab.url === opts.openedUrl && tab.targetId !== opts.targetId,
+    );
+    if (sameUrl) {
+      return sameUrl;
+    }
+    if (tabs.length === 1) {
+      return tabs[0] ?? null;
+    }
+    await new Promise((resolve) => setTimeout(resolve, OPEN_TAB_DISCOVERY_POLL_MS));
+  }
+  return null;
+}
+
 export function createProfileTabOps({
   profile,
   state,
@@ -164,16 +190,16 @@ export function createProfileTabOps({
     if (createdViaCdp) {
       const profileState = getProfileState();
       profileState.lastTargetId = createdViaCdp;
-      const deadline = Date.now() + OPEN_TAB_DISCOVERY_WINDOW_MS;
-      while (Date.now() < deadline) {
-        const tabs = await listTabs().catch(() => [] as BrowserTab[]);
-        const found = tabs.find((t) => t.targetId === createdViaCdp);
-        if (found) {
-          await assertBrowserNavigationResultAllowed({ url: found.url, ...ssrfPolicyOpts });
-          triggerManagedTabLimit(found.targetId);
-          return found;
-        }
-        await new Promise((r) => setTimeout(r, OPEN_TAB_DISCOVERY_POLL_MS));
+      const resolved = await resolveOpenedTargetId({
+        targetId: createdViaCdp,
+        openedUrl: url,
+        listTabs,
+      });
+      if (resolved) {
+        profileState.lastTargetId = resolved.targetId;
+        await assertBrowserNavigationResultAllowed({ url: resolved.url, ...ssrfPolicyOpts });
+        triggerManagedTabLimit(resolved.targetId);
+        return resolved;
       }
       triggerManagedTabLimit(createdViaCdp);
       return { targetId: createdViaCdp, title: "", url, type: "page" };

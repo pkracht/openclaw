@@ -1077,6 +1077,10 @@ describe("resolveOutboundSessionRoute", () => {
 });
 
 describe("normalizeOutboundPayloadsForJson", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("normalizes payloads for JSON output", () => {
     const cases = typedCases<{
       input: Parameters<typeof normalizeOutboundPayloadsForJson>[0];
@@ -1132,6 +1136,36 @@ describe("normalizeOutboundPayloadsForJson", () => {
       );
       expect(normalizeOutboundPayloadsForJson(input)).toEqual(testCase.expected);
     }
+  });
+
+  it("rewrites local media paths to the configured public base url", () => {
+    vi.stubEnv("HOME", "/home/clawbot");
+    vi.stubEnv("OPENCLAW_MEDIA_PUBLIC_BASE_URL", "https://bot.omega2k.de/__openclaw__/");
+
+    const normalized = normalizeOutboundPayloadsForJson([
+      {
+        text: "Hier ist dein Screenshot\nMEDIA:/home/clawbot/.openclaw/media/browser/example shot.jpg",
+      },
+      {
+        text: "Bild",
+        mediaUrl: "/home/clawbot/.openclaw/media/browser/example shot.jpg",
+      },
+    ]);
+
+    expect(normalized).toEqual([
+      {
+        text: "Hier ist dein Screenshot",
+        mediaUrl: "https://bot.omega2k.de/__openclaw__/browser/example%20shot.jpg",
+        mediaUrls: ["https://bot.omega2k.de/__openclaw__/browser/example%20shot.jpg"],
+        channelData: undefined,
+      },
+      {
+        text: "Bild",
+        mediaUrl: "https://bot.omega2k.de/__openclaw__/browser/example%20shot.jpg",
+        mediaUrls: ["https://bot.omega2k.de/__openclaw__/browser/example%20shot.jpg"],
+        channelData: undefined,
+      },
+    ]);
   });
 
   it("suppresses reasoning payloads", () => {

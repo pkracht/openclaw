@@ -99,6 +99,16 @@ function readActRequestParam(params: Record<string, unknown>) {
   return request as Parameters<typeof browserAct>[1];
 }
 
+function hasLegacyScreenshotHints(params: Record<string, unknown>) {
+  return (
+    typeof params.fullPage === "boolean" ||
+    typeof params.ref === "string" ||
+    typeof params.element === "string" ||
+    params.type === "png" ||
+    params.type === "jpeg"
+  );
+}
+
 type BrowserProxyFile = {
   path: string;
   base64: string;
@@ -284,10 +294,14 @@ export function createBrowserTool(opts?: {
     name: "browser",
     description: [
       "Control the browser via OpenClaw's browser control server (status/start/stop/profiles/tabs/open/snapshot/screenshot/actions).",
+      "The browser tool ALWAYS requires an action field. Never call browser with only url/fullPage/selector; that will fail validation.",
+      'Valid minimal examples: {"action":"open","targetUrl":"https://example.com"}, {"action":"screenshot","targetId":"<id>","fullPage":true}, {"action":"snapshot","targetId":"<id>","snapshotFormat":"ai"}, {"action":"act","targetId":"<id>","request":{"kind":"click","ref":"e12"}}.',
+      'For fresh URL tasks, do this exact sequence: first {"action":"open","targetUrl":"..."}; then use the returned targetId for {"action":"screenshot",...}, {"action":"snapshot",...}, or {"action":"act",...}.',
       'Profiles: use profile="chrome" for Chrome extension relay takeover (your existing Chrome tabs). Use profile="openclaw" for the isolated openclaw-managed browser.',
       'If the user mentions the Chrome extension / Browser Relay / toolbar button / “attach tab”, ALWAYS use profile="chrome" (do not ask which profile).',
       'When a node-hosted browser proxy is available, the tool may auto-route to it. Pin a node with node=<id|name> or target="node".',
       "Chrome extension relay needs an attached tab: user must click the OpenClaw Browser Relay toolbar icon on the tab (badge ON). If no tab is connected, ask them to attach it.",
+      "For a fresh page task on a new URL, prefer action=open instead of navigate so you get a dedicated tab and targetId. Reuse that targetId for snapshot/screenshot/act/focus. If stale tabs are causing confusion, close them explicitly.",
       "When using refs from snapshot (e.g. e12), keep the same tab: prefer passing targetId from the snapshot response into subsequent actions (act/click/type/etc).",
       'For stable, self-resolving refs across calls, use snapshot with refs="aria" (Playwright aria-ref ids). Default refs="role" are role+name-based.',
       "Use snapshot+act for UI automation. Avoid act:wait by default; use only in exceptional cases when no reliable UI state exists.",
@@ -297,7 +311,21 @@ export function createBrowserTool(opts?: {
     parameters: BrowserToolSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
-      const action = readStringParam(params, "action", { required: true });
+      const actionRaw = readStringParam(params, "action");
+      const legacyUrl = typeof params.targetUrl === "string" || typeof params.url === "string";
+      const legacyScreenshot = hasLegacyScreenshotHints(params);
+      const action =
+        actionRaw ??
+        (legacyUrl && legacyScreenshot
+          ? "__legacy_open_screenshot__"
+          : legacyUrl
+            ? "open"
+            : legacyScreenshot
+              ? "screenshot"
+              : undefined);
+      if (!action) {
+        throw new Error('browser requires "action" (or a legacy shorthand like url/fullPage).');
+      }
       const profile = readStringParam(params, "profile");
       const requestedNode = readStringParam(params, "node");
       let target = readStringParam(params, "target") as "sandbox" | "host" | "node" | undefined;
@@ -351,6 +379,54 @@ export function createBrowserTool(opts?: {
         : null;
 
       switch (action) {
+        case "__legacy_open_screenshot__": {
+          const targetUrl = readTargetUrlParam(params);
+          const fullPage = Boolean(params.fullPage);
+          const ref = readStringParam(params, "ref");
+          const element = readStringParam(params, "element");
+          const type = params.type === "jpeg" ? "jpeg" : "png";
+          const opened = proxyRequest
+            ? ((await proxyRequest({
+                method: "POST",
+                path: "/tabs/open",
+                profile,
+                body: { url: targetUrl },
+              })) as { targetId?: string })
+            : await browserOpenTab(baseUrl, targetUrl, { profile });
+          const targetId =
+            typeof opened?.targetId === "string" && opened.targetId.trim()
+              ? opened.targetId
+              : undefined;
+          if (!targetId) {
+            throw new Error("browser legacy open+screenshot failed to obtain targetId");
+          }
+          const result = proxyRequest
+            ? ((await proxyRequest({
+                method: "POST",
+                path: "/screenshot",
+                profile,
+                body: {
+                  targetId,
+                  fullPage,
+                  ref,
+                  element,
+                  type,
+                },
+              })) as Awaited<ReturnType<typeof browserScreenshotAction>>)
+            : await browserScreenshotAction(baseUrl, {
+                targetId,
+                fullPage,
+                ref,
+                element,
+                type,
+                profile,
+              });
+          return await imageResultFromFile({
+            label: "browser:screenshot",
+            path: result.path,
+            details: { ...result, targetId, legacyCompat: true, openedUrl: targetUrl },
+          });
+        }
         case "status":
           if (proxyRequest) {
             return jsonResult(

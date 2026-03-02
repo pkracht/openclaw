@@ -224,11 +224,15 @@ export async function browserAct(
   opts?: { profile?: string },
 ): Promise<BrowserActResponse> {
   const q = buildProfileQuery(opts?.profile);
+  const timeoutMs =
+    req.kind === "wait" && typeof req.timeoutMs === "number"
+      ? Math.max(20_000, req.timeoutMs + 2_000)
+      : 20_000;
   return await fetchBrowserJson<BrowserActResponse>(withBaseUrl(baseUrl, `/act${q}`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
-    timeoutMs: 20000,
+    timeoutMs,
   });
 }
 

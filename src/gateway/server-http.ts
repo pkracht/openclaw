@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import {
   createServer as createHttpServer,
   type Server as HttpServer,
@@ -5,13 +6,17 @@ import {
   type ServerResponse,
 } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
+import path from "node:path";
 import type { TlsOptions } from "node:tls";
 import type { WebSocketServer } from "ws";
 import { resolveAgentAvatar } from "../agents/identity-avatar.js";
 import { CANVAS_WS_PATH, handleA2uiHttpRequest } from "../canvas-host/a2ui.js";
+import { resolveFileWithinRoot } from "../canvas-host/file-resolver.js";
 import type { CanvasHostHandler } from "../canvas-host/server.js";
 import { loadConfig } from "../config/config.js";
+import { resolveStateDir } from "../config/paths.js";
 import type { createSubsystemLogger } from "../logging/subsystem.js";
+import { detectMime } from "../media/mime.js";
 import { safeEqualSecret } from "../security/secret-equal.js";
 import { handleSlackHttpRequest } from "../slack/http/index.js";
 import {
@@ -91,6 +96,78 @@ function shouldEnforceDefaultPluginGatewayAuth(pathContext: PluginRoutePathConte
     pathContext.decodePassLimitReached ||
     isProtectedPluginRoutePathFromContext(pathContext)
   );
+}
+
+const GATEWAY_MEDIA_PATH = "/__openclaw__/media";
+
+function isGatewayMediaPath(pathname: string): boolean {
+  return pathname === GATEWAY_MEDIA_PATH || pathname.startsWith(`${GATEWAY_MEDIA_PATH}/`);
+}
+
+async function handleGatewayMediaRequest(params: {
+  req: IncomingMessage;
+  res: ServerResponse;
+  requestPath: string;
+}): Promise<boolean> {
+  const { req, res, requestPath } = params;
+  if (!isGatewayMediaPath(requestPath)) {
+    return false;
+  }
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    res.statusCode = 405;
+    res.setHeader("Allow", "GET, HEAD");
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.end("Method Not Allowed");
+    return true;
+  }
+
+  const mediaRoot = path.join(resolveStateDir(), "media");
+  let mediaRootReal: string;
+  try {
+    mediaRootReal = await fs.realpath(mediaRoot);
+  } catch {
+    res.statusCode = 404;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.end("Not Found");
+    return true;
+  }
+
+  const relativeUrlPath = requestPath.slice(GATEWAY_MEDIA_PATH.length) || "/";
+  const opened = await resolveFileWithinRoot(mediaRootReal, relativeUrlPath);
+  if (!opened) {
+    res.statusCode = 404;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.end("Not Found");
+    return true;
+  }
+
+  const contentType = detectMime(opened.path) ?? "application/octet-stream";
+  res.statusCode = 200;
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Cache-Control", "private, max-age=300");
+  const stat = await opened.handle.stat();
+  if (stat.size >= 0) {
+    res.setHeader("Content-Length", String(stat.size));
+  }
+  if (req.method === "HEAD") {
+    await opened.handle.close().catch(() => {});
+    res.end();
+    return true;
+  }
+
+  const stream = opened.handle.createReadStream();
+  stream.on("error", () => {
+    if (!res.headersSent) {
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    }
+    res.end("Internal Server Error");
+  });
+  stream.on("close", () => {
+    void opened.handle.close().catch(() => {});
+  });
+  stream.pipe(res);
+  return true;
 }
 
 function handleGatewayProbeRequest(
@@ -553,6 +630,23 @@ export function createGatewayHttpServer(opts: {
               rateLimiter,
             }),
         });
+      }
+      if (isGatewayMediaPath(requestPath)) {
+        const ok = await authorizeCanvasRequest({
+          req,
+          auth: resolvedAuth,
+          trustedProxies,
+          allowRealIpFallback,
+          clients,
+          rateLimiter,
+        });
+        if (!ok.ok) {
+          sendGatewayAuthFailure(res, ok);
+          return;
+        }
+        if (await handleGatewayMediaRequest({ req, res, requestPath })) {
+          return;
+        }
       }
       if (canvasHost) {
         requestStages.push({

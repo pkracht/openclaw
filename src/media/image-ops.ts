@@ -312,10 +312,15 @@ export async function normalizeExifOrientation(buffer: Buffer): Promise<Buffer> 
 
 export async function resizeToJpeg(params: {
   buffer: Buffer;
-  maxSide: number;
+  maxSide?: number;
+  maxWidth?: number;
+  maxHeight?: number;
   quality: number;
   withoutEnlargement?: boolean;
 }): Promise<Buffer> {
+  const maxWidth = Math.max(1, Math.round(params.maxWidth ?? params.maxSide ?? 1));
+  const maxHeight = Math.max(1, Math.round(params.maxHeight ?? params.maxSide ?? 1));
+  const maxSide = Math.max(maxWidth, maxHeight);
   if (prefersSips()) {
     // Normalize EXIF orientation BEFORE resizing (sips resize doesn't auto-rotate)
     const normalized = await normalizeExifOrientationSips(params.buffer);
@@ -324,11 +329,15 @@ export async function resizeToJpeg(params: {
     if (params.withoutEnlargement !== false) {
       const meta = await getImageMetadata(normalized);
       if (meta) {
-        const maxDim = Math.max(meta.width, meta.height);
-        if (maxDim > 0 && maxDim <= params.maxSide) {
+        if (
+          meta.width > 0 &&
+          meta.height > 0 &&
+          meta.width <= maxWidth &&
+          meta.height <= maxHeight
+        ) {
           return await sipsResizeToJpeg({
             buffer: normalized,
-            maxSide: maxDim,
+            maxSide: Math.max(meta.width, meta.height),
             quality: params.quality,
           });
         }
@@ -336,7 +345,7 @@ export async function resizeToJpeg(params: {
     }
     return await sipsResizeToJpeg({
       buffer: normalized,
-      maxSide: params.maxSide,
+      maxSide,
       quality: params.quality,
     });
   }
@@ -346,8 +355,8 @@ export async function resizeToJpeg(params: {
   return await sharp(params.buffer)
     .rotate() // Auto-rotate based on EXIF before resizing
     .resize({
-      width: params.maxSide,
-      height: params.maxSide,
+      width: maxWidth,
+      height: maxHeight,
       fit: "inside",
       withoutEnlargement: params.withoutEnlargement !== false,
     })

@@ -46,9 +46,10 @@ function buildBootPrompt(content: string) {
     "BOOT.md:",
     content,
     "",
-    "If BOOT.md asks you to send a message, use the message tool (action=send with channel + target).",
-    "Use the `target` field (not `to`) for message tool destinations.",
-    `After sending with the message tool, reply with ONLY: ${SILENT_REPLY_TOKEN}.`,
+    "Do not call any tools during the boot check.",
+    "Do not use exec, message, sessions, browser, or any other tool.",
+    "This boot check is internal and has no delivery target.",
+    "If BOOT.md does not require visible operator action, reply with silence only.",
     `If nothing needs attention, reply with ONLY: ${SILENT_REPLY_TOKEN}.`,
   ].join("\n");
 }
@@ -178,6 +179,8 @@ export async function runBootOnce(params: {
         sessionId,
         deliver: false,
         senderIsOwner: true,
+        disableTools: true,
+        disableMessageTool: true,
       },
       bootRuntime,
       params.deps,

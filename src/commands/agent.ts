@@ -18,6 +18,7 @@ import { runCliAgent } from "../agents/cli-runner.js";
 import { getCliSessionId, setCliSessionId } from "../agents/cli-session.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { FailoverError } from "../agents/failover-error.js";
+import { mergeExternalSystemPrompt } from "../agents/external-system-prompt.js";
 import { formatAgentInternalEventsForPrompt } from "../agents/internal-events.js";
 import { AGENT_LANE_SUBAGENT } from "../agents/lanes.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
@@ -300,6 +301,8 @@ function runAgentAttempt(params: {
     prompt: effectivePrompt,
     images: params.isFallbackRetry ? undefined : params.opts.images,
     clientTools: params.opts.clientTools,
+    disableTools: params.opts.disableTools,
+    disableMessageTool: params.opts.disableMessageTool,
     provider: params.providerOverride,
     model: params.modelOverride,
     authProfileId,
@@ -319,21 +322,33 @@ function runAgentAttempt(params: {
 }
 
 export async function agentCommand(
-  opts: AgentCommandOpts,
+  rawOpts: AgentCommandOpts,
   runtime: RuntimeEnv = defaultRuntime,
   deps: CliDeps = createDefaultDeps(),
 ) {
-  const message = (opts.message ?? "").trim();
+  const mergedExtraSystemPrompt = await mergeExternalSystemPrompt(rawOpts.extraSystemPrompt);
+  const effectiveOpts: AgentCommandOpts =
+    mergedExtraSystemPrompt === rawOpts.extraSystemPrompt
+      ? rawOpts
+      : { ...rawOpts, extraSystemPrompt: mergedExtraSystemPrompt };
+  const opts = effectiveOpts;
+
+  const message = (effectiveOpts.message ?? "").trim();
   if (!message) {
     throw new Error("Message (--message) is required");
   }
-  const body = prependInternalEventContext(message, opts.internalEvents);
-  if (!opts.to && !opts.sessionId && !opts.sessionKey && !opts.agentId) {
+  const body = prependInternalEventContext(message, effectiveOpts.internalEvents);
+  if (
+    !effectiveOpts.to &&
+    !effectiveOpts.sessionId &&
+    !effectiveOpts.sessionKey &&
+    !effectiveOpts.agentId
+  ) {
     throw new Error("Pass --to <E.164>, --session-id, or --agent to choose a session");
   }
 
   const cfg = loadConfig();
-  const agentIdOverrideRaw = opts.agentId?.trim();
+  const agentIdOverrideRaw = effectiveOpts.agentId?.trim();
   const agentIdOverride = agentIdOverrideRaw ? normalizeAgentId(agentIdOverrideRaw) : undefined;
   if (agentIdOverride) {
     const knownAgents = listAgentIds(cfg);
@@ -343,8 +358,8 @@ export async function agentCommand(
       );
     }
   }
-  if (agentIdOverride && opts.sessionKey) {
-    const sessionAgentId = resolveAgentIdFromSessionKey(opts.sessionKey);
+  if (agentIdOverride && effectiveOpts.sessionKey) {
+    const sessionAgentId = resolveAgentIdFromSessionKey(effectiveOpts.sessionKey);
     if (sessionAgentId !== agentIdOverride) {
       throw new Error(
         `Agent id "${agentIdOverrideRaw}" does not match session key agent "${sessionAgentId}".`,
@@ -359,21 +374,21 @@ export async function agentCommand(
   });
   const thinkingLevelsHint = formatThinkingLevels(configuredModel.provider, configuredModel.model);
 
-  const thinkOverride = normalizeThinkLevel(opts.thinking);
-  const thinkOnce = normalizeThinkLevel(opts.thinkingOnce);
-  if (opts.thinking && !thinkOverride) {
+  const thinkOverride = normalizeThinkLevel(effectiveOpts.thinking);
+  const thinkOnce = normalizeThinkLevel(effectiveOpts.thinkingOnce);
+  if (effectiveOpts.thinking && !thinkOverride) {
     throw new Error(`Invalid thinking level. Use one of: ${thinkingLevelsHint}.`);
   }
-  if (opts.thinkingOnce && !thinkOnce) {
+  if (effectiveOpts.thinkingOnce && !thinkOnce) {
     throw new Error(`Invalid one-shot thinking level. Use one of: ${thinkingLevelsHint}.`);
   }
 
-  const verboseOverride = normalizeVerboseLevel(opts.verbose);
-  if (opts.verbose && !verboseOverride) {
+  const verboseOverride = normalizeVerboseLevel(effectiveOpts.verbose);
+  if (effectiveOpts.verbose && !verboseOverride) {
     throw new Error('Invalid verbose level. Use "on", "full", or "off".');
   }
 
-  const laneRaw = typeof opts.lane === "string" ? opts.lane.trim() : "";
+  const laneRaw = typeof effectiveOpts.lane === "string" ? effectiveOpts.lane.trim() : "";
   const isSubagentLane = laneRaw === String(AGENT_LANE_SUBAGENT);
   const timeoutSecondsRaw =
     opts.timeout !== undefined

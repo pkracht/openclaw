@@ -1,12 +1,15 @@
 import crypto from "node:crypto";
 import { resolveSessionAuthProfileOverride } from "../../agents/auth-profiles/session-override.js";
 import type { ExecToolDefaults } from "../../agents/bash-tools.js";
+import { mergeExternalSystemPrompt } from "../../agents/external-system-prompt.js";
 import {
   abortEmbeddedPiRun,
   isEmbeddedPiRunActive,
   isEmbeddedPiRunStreaming,
   resolveEmbeddedSessionLane,
 } from "../../agents/pi-embedded.js";
+import { browserAct, browserScreenshotAction } from "../../browser/client-actions-core.js";
+import { browserOpenTab } from "../../browser/client.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
   resolveGroupSessionKey,
@@ -16,6 +19,7 @@ import {
   updateSessionStore,
 } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
+import { resolvePublicMediaUrl } from "../../media/public-url.js";
 import { clearCommandLane, getQueueSize } from "../../process/command-queue.js";
 import { normalizeMainKey } from "../../routing/session-key.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
@@ -52,6 +56,102 @@ import { appendUntrustedContext } from "./untrusted-context.js";
 
 type AgentDefaults = NonNullable<OpenClawConfig["agents"]>["defaults"];
 type ExecOverrides = Pick<ExecToolDefaults, "host" | "security" | "ask" | "node">;
+
+function extractFirstHttpUrl(input: string): string | undefined {
+  const match = input.match(/https?:\/\/[^\s<>"'`]+/i);
+  return match?.[0];
+}
+
+function isDirectScreenshotIntent(input: string): boolean {
+  const normalized = input.toLowerCase();
+  if (!normalized.includes("http://") && !normalized.includes("https://")) {
+    return false;
+  }
+  if (!normalized.includes("screenshot") && !normalized.includes("bildschirmfoto")) {
+    return false;
+  }
+  return true;
+}
+
+const DEFAULT_DIRECT_SCREENSHOT_VIEWPORT = {
+  width: 1080,
+  height: 1920,
+} as const;
+
+function extractViewportSize(input: string): { width: number; height: number } {
+  const match = input.match(/(^|[^\d])(\d{2,5})\s*[xX]\s*(\d{2,5})(?=[^\d]|$)/);
+  const width = Number(match?.[2] ?? "");
+  const height = Number(match?.[3] ?? "");
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    return { ...DEFAULT_DIRECT_SCREENSHOT_VIEWPORT };
+  }
+  return {
+    width: Math.max(240, Math.min(3840, Math.trunc(width))),
+    height: Math.max(320, Math.min(12000, Math.trunc(height))),
+  };
+}
+
+async function tryDirectBrowserScreenshotReply(input: string): Promise<ReplyPayload | undefined> {
+  if (!isDirectScreenshotIntent(input)) {
+    return undefined;
+  }
+  const targetUrl = extractFirstHttpUrl(input);
+  if (!targetUrl) {
+    return undefined;
+  }
+  const normalized = input.toLowerCase();
+  const fullPage =
+    normalized.includes("--full-page") ||
+    normalized.includes("full-page") ||
+    normalized.includes("ganze seite");
+  const opened = await browserOpenTab(undefined, targetUrl);
+  try {
+    const viewport = extractViewportSize(input);
+    await browserAct(undefined, {
+      kind: "resize",
+      targetId: opened.targetId,
+      width: viewport.width,
+      height: viewport.height,
+    });
+    await browserAct(undefined, {
+      kind: "wait",
+      targetId: opened.targetId,
+      loadState: "domcontentloaded",
+      timeoutMs: 45_000,
+    });
+    try {
+      await browserAct(undefined, {
+        kind: "wait",
+        targetId: opened.targetId,
+        loadState: "networkidle",
+        timeoutMs: 30_000,
+      });
+    } catch {
+      // Many pages keep background connections open; a short settle delay is enough.
+    }
+    await browserAct(undefined, {
+      kind: "wait",
+      targetId: opened.targetId,
+      timeMs: 1_200,
+      timeoutMs: 5_000,
+    });
+    const shot = await browserScreenshotAction(undefined, {
+      targetId: opened.targetId,
+      fullPage,
+      type: "jpeg",
+    });
+    const publicUrl = resolvePublicMediaUrl(shot.path) ?? shot.path;
+    return {
+      text: publicUrl,
+      mediaUrl: shot.path,
+    };
+  } finally {
+    await browserAct(undefined, {
+      kind: "close",
+      targetId: opened.targetId,
+    }).catch(() => {});
+  }
+}
 
 function buildResetSessionNoticeText(params: {
   provider: string;
@@ -273,6 +373,11 @@ export async function runPreparedReply(
     groupIntro,
     groupSystemPrompt,
   ].filter(Boolean);
+  const extraSystemPrompt = await mergeExternalSystemPrompt(
+    [inboundMetaPrompt, groupChatContext, groupIntro, groupSystemPrompt]
+      .filter(Boolean)
+      .join("\n\n"),
+  );
   const baseBody = sessionCtx.BodyStripped ?? sessionCtx.Body ?? "";
   // Use CommandBody/RawBody for bare reset detection (clean message without structural context).
   const rawBodyTrimmed = (ctx.CommandBody ?? ctx.RawBody ?? ctx.Body ?? "").trim();
@@ -366,7 +471,7 @@ export async function runPreparedReply(
   const prefixedBody = [threadContextNote, prefixedBodyBase].filter(Boolean).join("\n\n");
   const mediaNote = buildInboundMediaNote(ctx);
   const mediaReplyHint = mediaNote
-    ? "To send an image back, prefer the message tool (media/path/filePath). If you must inline, use MEDIA:https://example.com/image.jpg (spaces ok, quote if needed) or a safe relative path like MEDIA:./image.jpg. Avoid absolute paths (MEDIA:/...) and ~ paths — they are blocked for security. Keep caption in the text body."
+    ? "To send an image back, prefer the message tool (media/path/filePath). Never invent <tool_response> blocks, screenshotId, screenshotUrl, or third-party screenshot links. If a real tool returns MEDIA:<local-path>, you may echo that MEDIA token or the derived public URL; delivery will rewrite valid local OpenClaw media paths automatically. Keep caption in the text body."
     : undefined;
   let prefixedCommandBody = mediaNote
     ? [mediaNote, mediaReplyHint, prefixedBody ?? ""].filter(Boolean).join("\n").trim()
@@ -512,10 +617,15 @@ export async function runPreparedReply(
       timeoutMs,
       blockReplyBreak: resolvedBlockStreamingBreak,
       ownerNumbers: command.ownerList.length > 0 ? command.ownerList : undefined,
-      extraSystemPrompt: extraSystemPromptParts.join("\n\n") || undefined,
+      extraSystemPrompt,
       ...(isReasoningTagProvider(provider) ? { enforceFinalTag: true } : {}),
     },
   };
+
+  const directScreenshotReply = await tryDirectBrowserScreenshotReply(baseBodyTrimmedRaw);
+  if (directScreenshotReply) {
+    return directScreenshotReply;
+  }
 
   return runReplyAgent({
     commandBody: prefixedCommandBody,

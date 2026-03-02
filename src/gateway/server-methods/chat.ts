@@ -10,6 +10,7 @@ import type { MsgContext } from "../../auto-reply/templating.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
 import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
+import { normalizeReplyPayloadsForDelivery } from "../../infra/outbound/payloads.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import {
   stripInlineDirectiveTagsForDisplay,
@@ -858,11 +859,25 @@ export const chatHandlers: GatewayRequestHandlers = {
           if (info.kind !== "final") {
             return;
           }
-          const text = payload.text?.trim() ?? "";
-          if (!text) {
-            return;
+          const normalizedPayloads = normalizeReplyPayloadsForDelivery([payload]);
+          for (const normalized of normalizedPayloads) {
+            const lines: string[] = [];
+            const text = normalized.text?.trim() ?? "";
+            if (text) {
+              lines.push(text);
+            }
+            const mediaUrls =
+              normalized.mediaUrls ?? (normalized.mediaUrl ? [normalized.mediaUrl] : []);
+            for (const mediaUrl of mediaUrls) {
+              if (mediaUrl?.trim()) {
+                lines.push(mediaUrl.trim());
+              }
+            }
+            const combined = lines.join("\n").trim();
+            if (combined) {
+              finalReplyParts.push(combined);
+            }
           }
-          finalReplyParts.push(text);
         },
       });
 

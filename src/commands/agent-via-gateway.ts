@@ -4,6 +4,7 @@ import type { CliDeps } from "../cli/deps.js";
 import { withProgress } from "../cli/progress.js";
 import { loadConfig } from "../config/config.js";
 import { callGateway, randomIdempotencyKey } from "../gateway/call.js";
+import { normalizeReplyPayloadsForDelivery } from "../infra/outbound/payloads.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import type { RuntimeEnv } from "../runtime.js";
 import {
@@ -167,7 +168,7 @@ export async function agentViaGatewayCommand(opts: AgentCliOpts, runtime: Runtim
     return response;
   }
 
-  for (const payload of payloads) {
+  for (const payload of normalizeReplyPayloadsForDelivery(payloads)) {
     const out = formatPayloadForLog(payload);
     if (out) {
       runtime.log(out);

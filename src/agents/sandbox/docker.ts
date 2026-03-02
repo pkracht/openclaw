@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
   materializeWindowsSpawnProgram,
@@ -46,6 +48,13 @@ export function resolveDockerSpawnInvocation(
   args: string[],
   runtime: DockerSpawnRuntime = DEFAULT_DOCKER_SPAWN_RUNTIME,
 ): { command: string; args: string[]; shell?: boolean; windowsHide?: boolean } {
+  const configuredPath = runtime.env.OPENCLAW_DOCKER_PATH?.trim();
+  if (configuredPath) {
+    return {
+      command: configuredPath,
+      args,
+    };
+  }
   const program = resolveWindowsSpawnProgram({
     command: "docker",
     platform: runtime.platform,
@@ -111,9 +120,12 @@ export function execDockerRaw(
         "code" in error &&
         (error as NodeJS.ErrnoException).code === "ENOENT"
       ) {
+        const checkedPath = process.env.OPENCLAW_DOCKER_PATH?.trim();
         const friendly = Object.assign(
           new Error(
-            'Sandbox mode requires Docker, but the "docker" command was not found in PATH. Install Docker (and ensure "docker" is available), or set `agents.defaults.sandbox.mode=off` to disable sandboxing.',
+            checkedPath
+              ? `Docker executable not found. Checked ${checkedPath}. Set OPENCLAW_DOCKER_PATH to a valid executable, ensure "docker" is on PATH, or set \`agents.defaults.sandbox.mode=off\` to disable sandboxing.`
+              : 'Sandbox mode requires Docker, but the "docker" command was not found in PATH. Install Docker (and ensure "docker" is available), or set `agents.defaults.sandbox.mode=off` to disable sandboxing.',
           ),
           { code: "INVALID_CONFIG", cause: error },
         );

@@ -1,6 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { resolveSessionAgentIds } from "../../agents/agent-scope.js";
 import { resolveBootstrapContextForRun } from "../../agents/bootstrap-files.js";
+import { mergeExternalSystemPrompt } from "../../agents/external-system-prompt.js";
 import { resolveDefaultModelForAgent } from "../../agents/model-selection.js";
 import type { EmbeddedContextFile } from "../../agents/pi-embedded-helpers.js";
 import { createOpenClawCodingTools } from "../../agents/pi-tools.js";
@@ -113,7 +114,7 @@ export async function resolveCommandsSystemPromptBundle(
     workspaceDir,
     defaultThinkLevel: params.resolvedThinkLevel,
     reasoningLevel: params.resolvedReasoningLevel,
-    extraSystemPrompt: undefined,
+    extraSystemPrompt: await mergeExternalSystemPrompt(),
     ownerNumbers: undefined,
     reasoningTagHint: false,
     toolNames,
